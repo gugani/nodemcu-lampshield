@@ -14,16 +14,13 @@ bool lamp_status = "OFF";
 bool lamp_oldstatus = "OFF";
 bool rgblamp_status = "OFF";
 bool rgblamp_oldstatus = "OFF";
-int r = 0;
-int g = 0;
-int b = 0;
-int next_r;
-int nest_g;
-int next_b;
-int rgbsteps;
-int dir_r = 0;
-int dir_g = 0;
-int dir_b = 0;
+int crgb[] = {254,254,254};
+float crgb_[3]; // Para sumar los incrementos de color
+//int nrgb[3];
+int rgbsteps[3];
+float rgbinc[3];
+int fadetime = 3000;
+int fadesteps = 200;
 int offlineblinkfrec = 500;
 int mqttconblinkfrec = 250;
 int onlineblinkfrec = 2000;
@@ -44,14 +41,14 @@ void motorup();
 void motordown();
 void irrec();
 void rgbAnimation();
+void rgbAnimationEnd();
 //Tasks
 Task blinkStatusLed(offlineblinkfrec, TASK_FOREVER, &statusLEDOff, &runner, true, NULL, &returnblinkstatus);
 Task reconnecttask(5000, TASK_FOREVER, &reconnect, &runner);
 Task wifitask(5, TASK_FOREVER, &clientloop, &runner);
 Task motoron(1, TASK_FOREVER, &motorup, &runner);
-Task rgbAnimationTask(20, rgbsteps, &rgbAnimation, &runner);
+Task rgbAnimationTask(fadetime/fadesteps, fadesteps, &rgbAnimation, &runner, false, NULL, &rgbAnimationEnd);
 Task irrectask(100, TASK_FOREVER, &irrec, &runner, true);
-
 
 // Pin definitions -----------------------------------------------------------------------------------------
 #define lamp_pin    5
@@ -182,59 +179,121 @@ void irrec(){
       case 0x8F7906F:  // SEL
         motoron.disable();
         break;
-      }  
-  }  
+      case 0x8F7708F: // MENU
+        Serial.println("RED");
+        rgbAnimationTask.disable();
+        rgbAnimationTask.setIterations(fadesteps);
+        rgbtransition(255,0,0);        
+        rgbAnimationTask.enable();
+        break;          
+      case 0x8F708F7: // INFO
+        Serial.println("GREEN");
+        rgbAnimationTask.disable();
+        rgbAnimationTask.setIterations(fadesteps);
+        rgbtransition(0,255,0);        
+        rgbAnimationTask.enable();
+        break;      
+      case 0x8F7C837: // AUTO
+        Serial.println("BLUE");
+        rgbAnimationTask.disable();
+        rgbAnimationTask.setIterations(fadesteps);
+        rgbtransition(0,0,255);        
+        rgbAnimationTask.enable();
+        break;
+      case 0x8F7F00F: // POWER
+        
+     }
+  } 
+}
+
+void rgbtransition(int r, int g, int b){
+  int color[] = {r,g,b};
+  for (int i = 0; i < 3; i++){
+    Serial.print(color[i]);
+    Serial.print(", ");
+    rgbsteps[i] = color[i] - crgb[i];          
+    rgbinc[i] = float(rgbsteps[i])/fadesteps;          
+    crgb_[i] = crgb[i];
+  }
+  Serial.println("");
 }
 
 // RGB leds
 void rgbAnimation(){
-  
+  int oldrgb[3];  
+  for (int i = 0; i < 3; i++){
+    oldrgb[i] = crgb[i];
+    crgb_[i] = crgb_[i] + rgbinc[i];
+    crgb[i] = int(crgb_[i]);    
+  }
+  if (crgb[0] != oldrgb[0]){
+    Serial.println(crgb[0]);
+    analogWrite(red_pin, crgb[0]);  
+  }
+  if (crgb[1] != oldrgb[1]){
+    Serial.println(crgb[1]);
+    analogWrite(green_pin, crgb[1]);
+  }
+  if (crgb[2] != oldrgb[2]){
+    Serial.println(crgb[2]);
+    analogWrite(blue_pin, crgb[2]);  
+  }
 }
 
-void rgbAnimationloop(){
-  if (dir_r == 0){
-    r++;
-  }
-  else{
-    r--;
-  }
-  if (dir_g == 0){
-    g++;
-  }
-  else{
-    g--;
-  }
-  if (dir_b == 0){
-    b++;
-  }
-  else{
-    b--;
-  }
-
-  if (r == 254){
-    dir_r = 1;
-  }
-  else if(r == 0){
-    dir_r = 0;
-  }
-  if (g == 254){
-    dir_g = 1;
-  }
-  else if (g==0){
-    dir_g = 0;
-  }
-  if (b == 254){
-    dir_b = 1;
-  }
-  else if (b==0){
-    dir_b = 0;
-  }
-   
-  analogWrite(red_pin, r);
-  analogWrite(green_pin, g);
-  analogWrite(blue_pin, b);    
-  
+void rgbAnimationEnd(){
+  Serial.print("R: ");
+  Serial.println(crgb[0]);
+  Serial.print("G: ");
+  Serial.println(crgb[1]);
+  Serial.print("B: ");
+  Serial.println(crgb[2]);
 }
+
+
+//void rgbAnimationloop(){
+//  if (dir_r == 0){
+//    r++;
+//  }
+//  else{
+//    r--;
+//  }
+//  if (dir_g == 0){
+//    g++;
+//  }
+//  else{
+//    g--;
+//  }
+//  if (dir_b == 0){
+//    b++;
+//  }
+//  else{
+//    b--;
+//  }
+//
+//  if (r == 254){
+//    dir_r = 1;
+//  }
+//  else if(r == 0){
+//    dir_r = 0;
+//  }
+//  if (g == 254){
+//    dir_g = 1;
+//  }
+//  else if (g==0){
+//    dir_g = 0;
+//  }
+//  if (b == 254){
+//    dir_b = 1;
+//  }
+//  else if (b==0){
+//    dir_b = 0;
+//  }
+//   
+//  analogWrite(red_pin, r);
+//  analogWrite(green_pin, g);
+//  analogWrite(blue_pin, b);    
+//  
+//}
 
 // SETUP --------------------------------------------------------------------------------------------------
 void setup() {
@@ -251,16 +310,16 @@ void setup() {
   pinMode(red_pin, OUTPUT);
   pinMode(green_pin, OUTPUT);
   pinMode(blue_pin, OUTPUT);
-  analogWrite(red_pin, r);
-  analogWrite(green_pin, g);
-  analogWrite(blue_pin, b);
+  analogWrite(red_pin, crgb[0]);
+  analogWrite(green_pin, crgb[1]);
+  analogWrite(blue_pin, crgb[2]);
   
   // Wifi
   WiFiManager wifiManager;  
   wifiManager.setAPCallback(configModeCallback);
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.autoConnect("Lamp");
-  
+  delay(500);
   // MQTT client
   client = PubSubClient(mqtt_server, 1883, mqttcallback, espClient);  
   
@@ -269,7 +328,7 @@ void setup() {
 
   // Motor
 //  stepper.setRPM(180);
-  
+  delay(500);
   // set point-in-time for scheduling start  
   runner.startNow();
 }
@@ -332,9 +391,9 @@ void mqttcallback(char* topic, byte* payload, unsigned int length) {
   // RGB lamp switch
   else if (String(topic).equals("rgblamp/switch")){
     if (msgString.equals("ON")){
-      analogWrite(red_pin, r);
-      analogWrite(green_pin, g);
-      analogWrite(blue_pin, b);
+      analogWrite(red_pin, crgb[0]);
+      analogWrite(green_pin, crgb[1]);
+      analogWrite(blue_pin, crgb[2]);
       rgblamp_on = true;
       client.publish("rgblamp/status", "ON", true);
       Serial.println("RGB Lamp ON");
@@ -359,16 +418,16 @@ void mqttcallback(char* topic, byte* payload, unsigned int length) {
     String firstValue = msgString.substring(0, commaIndex);
     String secondValue = msgString.substring(commaIndex+1, secondCommaIndex);
     String thirdValue = msgString.substring(secondCommaIndex+1); // To the end of the string
-    r = (firstValue.toFloat()/255)*1023;
-    g = (secondValue.toFloat()/255)*1023;
-    b = (thirdValue.toFloat()/255)*1023;
+    crgb[0] = (firstValue.toFloat()/255)*1023;
+    crgb[1] = (secondValue.toFloat()/255)*1023;
+    crgb[2] = (thirdValue.toFloat()/255)*1023;
     
     Serial.print("R:");
-    Serial.println(r);
+    Serial.println(crgb[0]);
     Serial.print("G:");
-    Serial.println(g);
+    Serial.println(crgb[1]);
     Serial.print("B:");
-    Serial.println(b);
+    Serial.println(crgb[2]);
     
 //    analogWrite(red_pin, r);
 //    analogWrite(green_pin, g);
@@ -411,5 +470,17 @@ void configModeCallback (WiFiManager *myWiFiManager) {
 
 void saveConfigCallback(){
   Serial.println("Save Config Callback"); 
+}
+
+
+// Util ------------------------------------------------------------------------------------------
+int getMax(int array_[]){
+  int mxm = array_[0];
+  for (int i=0; i < sizeof(array_); i++) {
+    if (array_[i]>mxm) {
+    mxm = array_[i];
+    }
+  }
+  return mxm;
 }
 
