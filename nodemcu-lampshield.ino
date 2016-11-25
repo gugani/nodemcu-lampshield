@@ -40,15 +40,15 @@ void clientloop();
 void motorup();
 void motordown();
 void irrec();
-void rgbAnimation();
-void rgbAnimationEnd();
+void rgbColorFade();
+
 //Tasks
 Task blinkStatusLed(offlineblinkfrec, TASK_FOREVER, &statusLEDOff, &runner, true, NULL, &returnblinkstatus);
 Task reconnecttask(5000, TASK_FOREVER, &reconnect, &runner);
 Task wifitask(5, TASK_FOREVER, &clientloop, &runner);
 Task motoron(1, TASK_FOREVER, &motorup, &runner);
-Task rgbAnimationTask(fadetime/fadesteps, fadesteps, &rgbAnimation, &runner, false, NULL, &rgbAnimationEnd);
-Task irrectask(100, TASK_FOREVER, &irrec, &runner, true);
+Task rgbColorFadeTask(fadetime/fadesteps, fadesteps, &rgbColorFade, &runner, false, NULL);
+Task IRrecTask(100, TASK_FOREVER, &irrec, &runner, true);
 
 // Pin definitions -----------------------------------------------------------------------------------------
 #define lamp_pin    5
@@ -181,27 +181,39 @@ void irrec(){
         break;
       case 0x8F7708F: // MENU
         Serial.println("RED");
-        rgbAnimationTask.disable();
-        rgbAnimationTask.setIterations(fadesteps);
+        rgbColorFadeTask.disable();
+        rgbColorFadeTask.setIterations(fadesteps);
         rgbtransition(255,0,0);        
-        rgbAnimationTask.enable();
+        rgbColorFadeTask.enable();
         break;          
       case 0x8F708F7: // INFO
         Serial.println("GREEN");
-        rgbAnimationTask.disable();
-        rgbAnimationTask.setIterations(fadesteps);
+        rgbColorFadeTask.disable();
+        rgbColorFadeTask.setIterations(fadesteps);
         rgbtransition(0,255,0);        
-        rgbAnimationTask.enable();
+        rgbColorFadeTask.enable();
         break;      
       case 0x8F7C837: // AUTO
         Serial.println("BLUE");
-        rgbAnimationTask.disable();
-        rgbAnimationTask.setIterations(fadesteps);
+        rgbColorFadeTask.disable();
+        rgbColorFadeTask.setIterations(fadesteps);
         rgbtransition(0,0,255);        
-        rgbAnimationTask.enable();
+        rgbColorFadeTask.enable();
         break;
       case 0x8F7F00F: // POWER
-        
+        if (lamp_on == false){
+          digitalWrite(lamp_pin, HIGH);
+          lamp_on = true;
+          client.publish("lamp/status", "ON", true);
+          Serial.println("Lamp ON");
+        }
+        else{
+          digitalWrite(lamp_pin, LOW);
+          lamp_on = false;
+          client.publish("lamp/status", "OFF", true);
+          Serial.println("Lamp OFF");
+        }  
+        break;
      }
   } 
 }
@@ -219,7 +231,7 @@ void rgbtransition(int r, int g, int b){
 }
 
 // RGB leds
-void rgbAnimation(){
+void rgbColorFade(){
   int oldrgb[3];  
   for (int i = 0; i < 3; i++){
     oldrgb[i] = crgb[i];
@@ -239,16 +251,6 @@ void rgbAnimation(){
     analogWrite(blue_pin, crgb[2]);  
   }
 }
-
-void rgbAnimationEnd(){
-  Serial.print("R: ");
-  Serial.println(crgb[0]);
-  Serial.print("G: ");
-  Serial.println(crgb[1]);
-  Serial.print("B: ");
-  Serial.println(crgb[2]);
-}
-
 
 //void rgbAnimationloop(){
 //  if (dir_r == 0){
