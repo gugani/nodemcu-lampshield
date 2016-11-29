@@ -183,8 +183,7 @@ void irrec(){
         break;
       case 0x8F7708F: // MENU
         Serial.println("RED");
-        // Stop all RGB tasks
-        rgbColorFadeTask.disable();
+        stopallRGBtasks();
         rgbColorFadeTask.setIterations(fadesteps);
         rgbtransition(255,0,0);        
         rgbColorFadeTask.enable();
@@ -194,8 +193,7 @@ void irrec(){
       case 0x8F708F7: // INFO
         Serial.println("GREEN");
         // Stop all RGB tasks
-        rgbRandomcolorsTask.enable();
-        rgbColorFadeTask.disable();
+        stopallRGBtasks();
         rgbColorFadeTask.setIterations(fadesteps);
         rgbtransition(0,255,0);        
         rgbColorFadeTask.enable();
@@ -204,9 +202,7 @@ void irrec(){
         break;      
       case 0x8F7C837: // AUTO
         Serial.println("BLUE");
-        // Stop all RGB tasks
-        rgbRandomcolorsTask.enable();
-        rgbColorFadeTask.disable();
+        stopallRGBtasks();        
         rgbColorFadeTask.setIterations(fadesteps);
         rgbtransition(0,0,255);        
         rgbColorFadeTask.enable();
@@ -230,7 +226,7 @@ void irrec(){
       case 0x8F718E7: // SOURCE
         // Stop all RGB tasks
         Serial.println("RGB: Random colors");
-        rgbColorFadeTask.disable();
+        stopallRGBtasks();
         rgbRandomcolorsTask.enable();
      }
   } 
@@ -465,5 +461,10 @@ int getMax(int array_[]){
     }
   }
   return mxm;
+}
+
+void stopallRGBtasks(){
+  rgbColorFadeTask.disable(); 
+  rgbRandomcolorsTask.disable();
 }
 
