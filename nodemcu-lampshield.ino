@@ -41,6 +41,7 @@ void motorup();
 void motordown();
 void irrec();
 void rgbColorFade();
+void rgbRandomColors();
 
 //Tasks
 Task blinkStatusLed(offlineblinkfrec, TASK_FOREVER, &statusLEDOff, &runner, true, NULL, &returnblinkstatus);
@@ -49,6 +50,7 @@ Task wifitask(5, TASK_FOREVER, &clientloop, &runner);
 Task motoron(1, TASK_FOREVER, &motorup, &runner);
 Task rgbColorFadeTask(fadetime/fadesteps, fadesteps, &rgbColorFade, &runner, false, NULL);
 Task IRrecTask(100, TASK_FOREVER, &irrec, &runner, true);
+Task rgbRandomcolorsTask(fadetime, TASK_FOREVER, &rgbRandomColors, &runner);
 
 // Pin definitions -----------------------------------------------------------------------------------------
 #define lamp_pin    5
@@ -181,24 +183,35 @@ void irrec(){
         break;
       case 0x8F7708F: // MENU
         Serial.println("RED");
+        // Stop all RGB tasks
         rgbColorFadeTask.disable();
         rgbColorFadeTask.setIterations(fadesteps);
         rgbtransition(255,0,0);        
         rgbColorFadeTask.enable();
+        client.publish("rgblamp/status", "ON", true);
+        Serial.println("RGB Lamp ON");
         break;          
       case 0x8F708F7: // INFO
         Serial.println("GREEN");
+        // Stop all RGB tasks
+        rgbRandomcolorsTask.enable();
         rgbColorFadeTask.disable();
         rgbColorFadeTask.setIterations(fadesteps);
         rgbtransition(0,255,0);        
         rgbColorFadeTask.enable();
+        client.publish("rgblamp/status", "ON", true);
+        Serial.println("RGB Lamp ON");
         break;      
       case 0x8F7C837: // AUTO
         Serial.println("BLUE");
+        // Stop all RGB tasks
+        rgbRandomcolorsTask.enable();
         rgbColorFadeTask.disable();
         rgbColorFadeTask.setIterations(fadesteps);
         rgbtransition(0,0,255);        
         rgbColorFadeTask.enable();
+        client.publish("rgblamp/status", "ON", true);
+        Serial.println("RGB Lamp ON");
         break;
       case 0x8F7F00F: // POWER
         if (lamp_on == false){
@@ -213,7 +226,12 @@ void irrec(){
           client.publish("lamp/status", "OFF", true);
           Serial.println("Lamp OFF");
         }  
-        break;
+        break;        
+      case 0x8F718E7: // SOURCE
+        // Stop all RGB tasks
+        Serial.println("RGB: Random colors");
+        rgbColorFadeTask.disable();
+        rgbRandomcolorsTask.enable();
      }
   } 
 }
@@ -221,13 +239,10 @@ void irrec(){
 void rgbtransition(int r, int g, int b){
   int color[] = {r,g,b};
   for (int i = 0; i < 3; i++){
-    Serial.print(color[i]);
-    Serial.print(", ");
     rgbsteps[i] = color[i] - crgb[i];          
     rgbinc[i] = float(rgbsteps[i])/fadesteps;          
     crgb_[i] = crgb[i];
-  }
-  Serial.println("");
+  }  
 }
 
 // RGB leds
@@ -238,64 +253,26 @@ void rgbColorFade(){
     crgb_[i] = crgb_[i] + rgbinc[i];
     crgb[i] = int(crgb_[i]);    
   }
-  if (crgb[0] != oldrgb[0]){
-    Serial.println(crgb[0]);
+  if (crgb[0] != oldrgb[0]){    
     analogWrite(red_pin, crgb[0]);  
   }
-  if (crgb[1] != oldrgb[1]){
-    Serial.println(crgb[1]);
+  if (crgb[1] != oldrgb[1]){    
     analogWrite(green_pin, crgb[1]);
   }
-  if (crgb[2] != oldrgb[2]){
-    Serial.println(crgb[2]);
+  if (crgb[2] != oldrgb[2]){    
     analogWrite(blue_pin, crgb[2]);  
   }
 }
 
-//void rgbAnimationloop(){
-//  if (dir_r == 0){
-//    r++;
-//  }
-//  else{
-//    r--;
-//  }
-//  if (dir_g == 0){
-//    g++;
-//  }
-//  else{
-//    g--;
-//  }
-//  if (dir_b == 0){
-//    b++;
-//  }
-//  else{
-//    b--;
-//  }
-//
-//  if (r == 254){
-//    dir_r = 1;
-//  }
-//  else if(r == 0){
-//    dir_r = 0;
-//  }
-//  if (g == 254){
-//    dir_g = 1;
-//  }
-//  else if (g==0){
-//    dir_g = 0;
-//  }
-//  if (b == 254){
-//    dir_b = 1;
-//  }
-//  else if (b==0){
-//    dir_b = 0;
-//  }
-//   
-//  analogWrite(red_pin, r);
-//  analogWrite(green_pin, g);
-//  analogWrite(blue_pin, b);    
-//  
-//}
+void rgbRandomColors(){  
+  rgbColorFadeTask.disable();
+  rgbColorFadeTask.setIterations(fadesteps);
+  rgbtransition(random(255),random(255),random(255));        
+  rgbColorFadeTask.enable();
+//  client.publish("rgblamp/status", "ON", true);
+//  Serial.println("RGB Lamp ON");
+}
+
 
 // SETUP --------------------------------------------------------------------------------------------------
 void setup() {
@@ -401,9 +378,12 @@ void mqttcallback(char* topic, byte* payload, unsigned int length) {
       Serial.println("RGB Lamp ON");
     }
     else if (msgString.equals("OFF")){
-      analogWrite(red_pin, 0);
-      analogWrite(green_pin, 0);
-      analogWrite(blue_pin, 0);
+      for (int i = 0; i < 3; i++){
+        crgb[i] = 0;
+      }
+      analogWrite(red_pin, crgb[0]);
+      analogWrite(green_pin, crgb[1]);
+      analogWrite(blue_pin, crgb[2]);
       rgblamp_on = false;
       client.publish("rgblamp/status", "OFF", true);
       Serial.println("RGB Lamp OFF");
@@ -415,6 +395,7 @@ void mqttcallback(char* topic, byte* payload, unsigned int length) {
 
   // RGB lamp color
   else if (String(topic).equals("rgblamp/rgbcommand")){
+    // Stop all RGB tasks
     int commaIndex = msgString.indexOf(',');
     int secondCommaIndex = msgString.indexOf(',', commaIndex+1);
     String firstValue = msgString.substring(0, commaIndex);
