@@ -6,6 +6,8 @@
 #include "BasicStepperDriver.h"
 #include <IRremoteESP8266.h>
 #include <TaskScheduler.h>
+#include <RGBConverter.h>
+#include <EEPROM.h>
 
 //States --------------------------------------------------------------------------------------------------
 bool lamp_on = true;
@@ -27,6 +29,11 @@ int onlineblinkfrec = 2000;
 int cstatus = 0;  // 0 - Disconnected, 1 - MQTT connecting, 2 - MQTT connected
 int motorstatus = 0;  // 0 - Stopped, 1 - UP, 2 - Down
 int motordir = 0; //0 - UP, 1 - DOWN
+int rpm = 120;
+int totalsteps = 50 * 200;
+int currentstep;
+float rpm_frec = 250 * (60/rpm); // 250 porque avanzamos 1/4 de vuelta con el callback de "motoron" task
+int address = 0;
 
 // Task Scheduler-------------------------------------------------------------------------------------------
 Scheduler runner;
@@ -47,7 +54,7 @@ void rgbRandomColors();
 Task blinkStatusLed(offlineblinkfrec, TASK_FOREVER, &statusLEDOff, &runner, true, NULL, &returnblinkstatus);
 Task reconnecttask(5000, TASK_FOREVER, &reconnect, &runner);
 Task wifitask(5, TASK_FOREVER, &clientloop, &runner);
-Task motoron(1, TASK_FOREVER, &motorup, &runner);
+Task motoron(int(rpm_frec), TASK_FOREVER, &motorup, &runner);
 Task rgbColorFadeTask(fadetime/fadesteps, fadesteps, &rgbColorFade, &runner, false, NULL);
 Task IRrecTask(100, TASK_FOREVER, &irrec, &runner, true);
 Task rgbRandomcolorsTask(fadetime, TASK_FOREVER, &rgbRandomColors, &runner);
@@ -154,11 +161,25 @@ void clientloop(){
 
 // Motor
 void motorup(){
-  stepper.move(1*MICROSTEPS);
+  stepper.move(50*MICROSTEPS);
+  currentstep = currentstep + 50;
+  if (currentstep > totalsteps){
+    currentstep = totalsteps;
+    motoron.disable();
+    client.publish("lamp/motor", "STOP", true);
+    Serial.println("Lamp fully closed");
+  }
 }
 
 void motordown(){
-  stepper.move(-1*MICROSTEPS);
+  stepper.move(-50*MICROSTEPS);
+  currentstep = currentstep - 50;  
+  if (currentstep < 0){
+    currentstep = 0;
+    motoron.disable();
+    client.publish("lamp/motor", "STOP", true);
+    Serial.println("Lamp fully opened");
+  }
 }
 
 // IR receiver
@@ -173,13 +194,17 @@ void irrec(){
       case 0x8F750AF:  // UP
         motoron.setCallback(&motorup);
         motoron.enable();
+        client.publish("lamp/motor", "OPEN", true);
         break;
       case 0x8F7D02F:  // DOWN
         motoron.setCallback(&motordown);
         motoron.enable();
+        client.publish("lamp/motor", "CLOSE", true);
         break;
       case 0x8F7906F:  // SEL
         motoron.disable();
+        client.publish("lamp/motor", "STOP", true);
+        Serial.println(currentstep);
         break;
       case 0x8F7708F: // MENU
         Serial.println("RED");
@@ -276,6 +301,11 @@ void setup() {
   delay(500);
   Serial.print("Ikea Lamp Control");
 
+  EEPROM.begin(512);
+  // Iniciamos el valor de posición a 0
+//  EEPROM.write(address, 0);
+//  EEPROM.commit();
+  
   pinMode(lamp_pin, OUTPUT);
   pinMode(statusled_pin, OUTPUT);
   
@@ -293,7 +323,7 @@ void setup() {
   WiFiManager wifiManager;  
   wifiManager.setAPCallback(configModeCallback);
   wifiManager.setSaveConfigCallback(saveConfigCallback);
-  wifiManager.autoConnect("Lamp");
+  wifiManager.autoConnect("Euclides", "nobebacafe");
   delay(500);
   // MQTT client
   client = PubSubClient(mqtt_server, 1883, mqttcallback, espClient);  
@@ -302,8 +332,9 @@ void setup() {
   irrecv.enableIRIn();
 
   // Motor
-//  stepper.setRPM(180);
+  stepper.setRPM(rpm);
   delay(500);
+  Serial.println(EEPROM.read(address));
   // set point-in-time for scheduling start  
   runner.startNow();
 }
@@ -397,20 +428,22 @@ void mqttcallback(char* topic, byte* payload, unsigned int length) {
     String firstValue = msgString.substring(0, commaIndex);
     String secondValue = msgString.substring(commaIndex+1, secondCommaIndex);
     String thirdValue = msgString.substring(secondCommaIndex+1); // To the end of the string
-    crgb[0] = (firstValue.toFloat()/255)*1023;
-    crgb[1] = (secondValue.toFloat()/255)*1023;
-    crgb[2] = (thirdValue.toFloat()/255)*1023;
-    
+//    crgb[0] = (firstValue.toFloat()/255)*1023;
+//    crgb[1] = (secondValue.toFloat()/255)*1023;
+//    crgb[2] = (thirdValue.toFloat()/255)*1023;
+    crgb[0] = map(firstValue.toFloat(), 0, 255, 0, 1023);
+    crgb[1] = map(secondValue.toFloat(), 0, 255, 0, 1023);
+    crgb[2] = map(thirdValue.toFloat(), 0, 255, 0, 1023);
     Serial.print("R:");
     Serial.println(crgb[0]);
     Serial.print("G:");
     Serial.println(crgb[1]);
     Serial.print("B:");
     Serial.println(crgb[2]);
-    
-//    analogWrite(red_pin, r);
-//    analogWrite(green_pin, g);
-//    analogWrite(blue_pin, b);;
+    stopallRGBtasks();
+    analogWrite(red_pin, crgb[0]);
+    analogWrite(green_pin, crgb[1]);
+    analogWrite(blue_pin, crgb[2]);;
   }
 
   
@@ -432,6 +465,20 @@ void mqttcallback(char* topic, byte* payload, unsigned int length) {
         motordir = 0;
       }
     }
+  }
+  else if (String(topic).equals("lamp/motor/set")){
+    if (msgString.equals("OPEN")){
+      motoron.setCallback(&motorup);
+      motoron.enable();
+    }
+    else if (msgString.equals("CLOSE")){
+      motoron.setCallback(&motordown);
+      motoron.enable();
+    }
+    else if (msgString.equals("STOP")){
+      motoron.disable();
+    }
+    
   }
   else{
     Serial.println("Unknown topic");
