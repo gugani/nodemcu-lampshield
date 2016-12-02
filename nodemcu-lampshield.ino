@@ -9,13 +9,9 @@
 #include <RGBConverter.h>
 #include <EEPROM.h>
 
-//States --------------------------------------------------------------------------------------------------
+//Definitions and States --------------------------------------------------------------------------------------------------
 bool lamp_on = true;
 bool rgblamp_on = false;
-bool lamp_status = "OFF";
-bool lamp_oldstatus = "OFF";
-bool rgblamp_status = "OFF";
-bool rgblamp_oldstatus = "OFF";
 int crgb[] = {254,254,254};
 float crgb_[3]; // Para sumar los incrementos de color
 //int nrgb[3];
@@ -33,7 +29,12 @@ int rpm = 120;
 int totalsteps = 50 * 200;
 int currentstep;
 float rpm_frec = 250 * (60/rpm); // 250 porque avanzamos 1/4 de vuelta con el callback de "motoron" task
-int address = 0;
+int currentposition_address = 0;
+int lampstate_address = 4; // lamp_on
+int rgblampstate_address = 2; // rgblamp_on
+int rstate_address = 5; // crgb[0]
+int gstate_address = 6; // crgb[1]
+int bstate_address = 7; // crgb[2
 
 // Task Scheduler-------------------------------------------------------------------------------------------
 Scheduler runner;
@@ -169,6 +170,8 @@ void motorup(){
     client.publish("lamp/motor", "STOP", true);
     Serial.println("Lamp fully closed");
   }
+  EEPROMWritelong(currentposition_address, currentstep);
+//  EEPROM.commit();
 }
 
 void motordown(){
@@ -180,6 +183,8 @@ void motordown(){
     client.publish("lamp/motor", "STOP", true);
     Serial.println("Lamp fully opened");
   }
+  EEPROMWritelong(currentposition_address, currentstep);
+//  EEPROM.commit();
 }
 
 // IR receiver
@@ -236,25 +241,26 @@ void irrec(){
         break;
       case 0x8F7F00F: // POWER
         if (lamp_on == false){
-          digitalWrite(lamp_pin, HIGH);
-          lamp_on = true;
-          client.publish("lamp/status", "ON", true);
-          Serial.println("Lamp ON");
+          switchwhitelamp(1);
         }
         else{
-          digitalWrite(lamp_pin, LOW);
-          lamp_on = false;
-          client.publish("lamp/status", "OFF", true);
-          Serial.println("Lamp OFF");
+          switchwhitelamp(0);
         }  
         break;        
       case 0x8F718E7: // SOURCE
+        if (rgblamp_on == false){
+          switchrgblamp(1);
+        }
+        else{
+          switchrgblamp(0);
+        } 
+      
         // Stop all RGB tasks
-        Serial.println("RGB: Random colors");
-        stopallRGBtasks();
-        rgbRandomcolorsTask.enable();
-     }
-  } 
+//        Serial.println("RGB: Random colors");
+//        stopallRGBtasks();
+//        rgbRandomcolorsTask.enable();
+     } // switch statement end
+  } // if statement end 
 }
 
 void rgbtransition(int r, int g, int b){
@@ -298,26 +304,70 @@ void rgbRandomColors(){
 // SETUP --------------------------------------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
+  EEPROM.begin(512);
   delay(500);
   Serial.print("Ikea Lamp Control");
 
-  EEPROM.begin(512);
-  // Iniciamos el valor de posición a 0
-//  EEPROM.write(address, 0);
-//  EEPROM.commit();
+  // Read EEPROM values
+  currentstep = EEPROMReadlong(currentposition_address);
+
+  crgb[0] = map(EEPROM.read(rstate_address), 0, 255, 0, 1023);
+  crgb[1] = map(EEPROM.read(gstate_address), 0, 255, 0, 1023);
+  crgb[2] = map(EEPROM.read(bstate_address), 0, 255, 0, 1023);
   
+  if (EEPROM.read(lampstate_address) == 1){
+    lamp_on = true;    
+  }
+  else{
+    lamp_on = false;
+  }
+  if (EEPROM.read(rgblampstate_address) == 1){
+    rgblamp_on = true;    
+  }
+  else{
+    rgblamp_on = false;
+  }
+
+  // Print status
+  Serial.println(" ");
+  Serial.print("Current position (0-10000): ");
+  Serial.println(currentstep);
+  Serial.print("Lamp: ");
+  Serial.println(lamp_on);
+  Serial.print("RGB Lamp: ");
+  Serial.println(rgblamp_on);
+  Serial.print("R:");
+  Serial.println(crgb[0]);
+  Serial.print("G:");
+  Serial.println(crgb[1]);
+  Serial.print("B:");
+  Serial.println(crgb[2]);
+
+  // Pins config
   pinMode(lamp_pin, OUTPUT);
-  pinMode(statusled_pin, OUTPUT);
-  
-  digitalWrite(lamp_pin, HIGH);
-  digitalWrite(statusled_pin, HIGH);
-  
+  pinMode(statusled_pin, OUTPUT);  
   pinMode(red_pin, OUTPUT);
   pinMode(green_pin, OUTPUT);
   pinMode(blue_pin, OUTPUT);
-  analogWrite(red_pin, crgb[0]);
-  analogWrite(green_pin, crgb[1]);
-  analogWrite(blue_pin, crgb[2]);
+
+  // Last state before switch off
+  if (lamp_on == true){
+    digitalWrite(lamp_pin, HIGH);
+  }
+  else{
+    digitalWrite(lamp_pin, LOW);
+  }
+  if (rgblamp_on == true){
+    analogWrite(red_pin, crgb[0]);
+    analogWrite(green_pin, crgb[1]);
+    analogWrite(blue_pin, crgb[2]);
+  }
+  else{
+    analogWrite(red_pin, 0);
+    analogWrite(green_pin, 0);
+    analogWrite(blue_pin, 0);
+  }
+
   
   // Wifi
   WiFiManager wifiManager;  
@@ -333,8 +383,7 @@ void setup() {
 
   // Motor
   stepper.setRPM(rpm);
-  delay(500);
-  Serial.println(EEPROM.read(address));
+  delay(500);  
   // set point-in-time for scheduling start  
   runner.startNow();
 }
@@ -378,46 +427,42 @@ void mqttcallback(char* topic, byte* payload, unsigned int length) {
   // White lamp switch
   if (String(topic).equals("lamp/switch")){
     if (msgString.equals("ON")){
-      digitalWrite(lamp_pin, HIGH);
-      lamp_on = true;
-      client.publish("lamp/status", "ON", true);
-      Serial.println("Lamp ON");
+      switchwhitelamp(1);
     }
     else if (msgString.equals("OFF")){
-      digitalWrite(lamp_pin, LOW);
-      lamp_on = false;
-      client.publish("lamp/status", "OFF", true);
-      Serial.println("Lamp OFF");
+      switchwhitelamp(0);
     }
     else{
       Serial.println("Unknown payload");
     }
+    EEPROM.commit();
   }
 
   // RGB lamp switch
   else if (String(topic).equals("rgblamp/switch")){
     if (msgString.equals("ON")){
-      analogWrite(red_pin, crgb[0]);
-      analogWrite(green_pin, crgb[1]);
-      analogWrite(blue_pin, crgb[2]);
-      rgblamp_on = true;
-      client.publish("rgblamp/status", "ON", true);
-      Serial.println("RGB Lamp ON");
+      switchrgblamp(1);
+//      analogWrite(red_pin, crgb[0]);
+//      analogWrite(green_pin, crgb[1]);
+//      analogWrite(blue_pin, crgb[2]);
+//      rgblamp_on = true;
+//      client.publish("rgblamp/status", "ON", true);
+//      Serial.println("RGB Lamp ON");
+//      EEPROM.write(rgblampstate_address, 1);
     }
     else if (msgString.equals("OFF")){
-      for (int i = 0; i < 3; i++){
-        crgb[i] = 0;
-      }
-      analogWrite(red_pin, crgb[0]);
-      analogWrite(green_pin, crgb[1]);
-      analogWrite(blue_pin, crgb[2]);
-      rgblamp_on = false;
-      client.publish("rgblamp/status", "OFF", true);
-      Serial.println("RGB Lamp OFF");
+      switchrgblamp(0);
+//      analogWrite(red_pin, 0);
+//      analogWrite(green_pin, 0);
+//      analogWrite(blue_pin, 0);
+//      rgblamp_on = false;
+//      client.publish("rgblamp/status", "OFF", true);
+//      Serial.println("RGB Lamp OFF");
+//      EEPROM.write(rgblampstate_address, 0);
     }
     else{
       Serial.println("Unknown payload");
-    }
+    }    
   }
 
   // RGB lamp color
@@ -428,9 +473,6 @@ void mqttcallback(char* topic, byte* payload, unsigned int length) {
     String firstValue = msgString.substring(0, commaIndex);
     String secondValue = msgString.substring(commaIndex+1, secondCommaIndex);
     String thirdValue = msgString.substring(secondCommaIndex+1); // To the end of the string
-//    crgb[0] = (firstValue.toFloat()/255)*1023;
-//    crgb[1] = (secondValue.toFloat()/255)*1023;
-//    crgb[2] = (thirdValue.toFloat()/255)*1023;
     crgb[0] = map(firstValue.toFloat(), 0, 255, 0, 1023);
     crgb[1] = map(secondValue.toFloat(), 0, 255, 0, 1023);
     crgb[2] = map(thirdValue.toFloat(), 0, 255, 0, 1023);
@@ -443,29 +485,13 @@ void mqttcallback(char* topic, byte* payload, unsigned int length) {
     stopallRGBtasks();
     analogWrite(red_pin, crgb[0]);
     analogWrite(green_pin, crgb[1]);
-    analogWrite(blue_pin, crgb[2]);;
+    analogWrite(blue_pin, crgb[2]);
+    EEPROM.write(rstate_address, firstValue.toInt());
+    EEPROM.write(gstate_address, secondValue.toInt());
+    EEPROM.write(bstate_address, thirdValue.toInt());
+    EEPROM.commit();
   }
 
-  
-  else if (String(topic).equals("motor/test")){
-    Serial.println("Motor test");
-    if (motorstatus == 0){
-      motoron.enable();
-      motorstatus = 1;
-    }
-    else{
-      motoron.disable();
-      motorstatus = 0;
-      if (motordir == 0){
-        motoron.setCallback(&motordown);
-        motordir = 1;
-      }
-      else{
-        motoron.setCallback(&motorup);
-        motordir = 0;
-      }
-    }
-  }
   else if (String(topic).equals("lamp/motor/set")){
     if (msgString.equals("OPEN")){
       motoron.setCallback(&motorup);
@@ -477,8 +503,7 @@ void mqttcallback(char* topic, byte* payload, unsigned int length) {
     }
     else if (msgString.equals("STOP")){
       motoron.disable();
-    }
-    
+    }   
   }
   else{
     Serial.println("Unknown topic");
@@ -500,6 +525,48 @@ void saveConfigCallback(){
 
 
 // Util ------------------------------------------------------------------------------------------
+
+void switchwhitelamp(int command){
+  if (command == 1){
+    digitalWrite(lamp_pin, HIGH);
+    lamp_on = true;
+    client.publish("lamp/status", "ON", true);
+    Serial.println("Lamp ON");
+    EEPROM.write(lampstate_address, 1);
+  }
+  else{
+    digitalWrite(lamp_pin, LOW);
+    lamp_on = false;
+    client.publish("lamp/status", "OFF", true);
+    Serial.println("Lamp OFF");
+    EEPROM.write(lampstate_address, 0);
+  }
+  EEPROM.commit();
+}
+
+void switchrgblamp(int command){
+  if (command == 1){
+    analogWrite(red_pin, crgb[0]);
+    analogWrite(green_pin, crgb[1]);
+    analogWrite(blue_pin, crgb[2]);
+    rgblamp_on = true;
+    client.publish("rgblamp/status", "ON", true);
+    Serial.println("RGB Lamp ON");
+    EEPROM.write(rgblampstate_address, 1);
+  }
+  else{
+    stopallRGBtasks();
+    analogWrite(red_pin, 0);
+    analogWrite(green_pin, 0);
+    analogWrite(blue_pin, 0);
+    rgblamp_on = false;
+    client.publish("rgblamp/status", "OFF", true);
+    Serial.println("RGB Lamp OFF");
+    EEPROM.write(rgblampstate_address, 0);
+  }
+  EEPROM.commit();
+}
+
 int getMax(int array_[]){
   int mxm = array_[0];
   for (int i=0; i < sizeof(array_); i++) {
@@ -513,5 +580,35 @@ int getMax(int array_[]){
 void stopallRGBtasks(){
   rgbColorFadeTask.disable(); 
   rgbRandomcolorsTask.disable();
+}
+
+//This function will write/read a 4 byte (32bit) long to the eeprom at
+//the specified address to address + 3.
+void EEPROMWritelong(int address, long value)
+{
+  //Decomposition from a long to 4 bytes by using bitshift.
+  //One = Most significant -> Four = Least significant byte
+  byte four = (value & 0xFF);
+  byte three = ((value >> 8) & 0xFF);
+  byte two = ((value >> 16) & 0xFF);
+  byte one = ((value >> 24) & 0xFF);
+  
+  //Write the 4 bytes into the eeprom memory.
+  EEPROM.write(address, four);
+  EEPROM.write(address + 1, three);
+  EEPROM.write(address + 2, two);
+  EEPROM.write(address + 3, one);
+}
+
+long EEPROMReadlong(long address)
+{
+  //Read the 4 bytes from the eeprom memory.
+  long four = EEPROM.read(address);
+  long three = EEPROM.read(address + 1);
+  long two = EEPROM.read(address + 2);
+  long one = EEPROM.read(address + 3);
+  
+  //Return the recomposed long by using bitshift.
+  return ((four << 0) & 0xFF) + ((three << 8) & 0xFFFF) + ((two << 16) & 0xFFFFFF) + ((one << 24) & 0xFFFFFFFF);
 }
 
